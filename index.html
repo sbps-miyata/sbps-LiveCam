@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>蒲田ライブカメラ 16:9</title>
+<!--
+  蒲田 24時間ライブ配信 デジタルサイネージ用ページ（横長 16:9 専用・1枚完結）
+
+  ■ 映像を画面全体に表示し、見出し・時計・QR コードを映像の上に重ねる。
+    画面が 16:9 でない場合は 16:9 の枠を保ったまま中央に表示する（余りは黒）。
+  ■ 配信が変わったとき
+    下の CONFIG.videoId を書き換える。
+    またはファイルを開く URL の末尾に ?v=新しいID を付けてもよい。
+  ■ 音声
+    ブラウザの自動再生制限のためミュートで再生する（もともと配信は無音）。
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #000; color: #fff;
+    font-family: "BIZ UDPGothic", "Yu Gothic UI", "Hiragino Sans", "Meiryo", sans-serif;
+    cursor: none;
+  }
+  body { display: flex; align-items: center; justify-content: center; }
+
+  /* 16:9 の舞台。--u は舞台の幅の 1%（1920px 幅なら 19.2px） */
+  .stage {
+    --w: min(100vw, calc(100vh * 16 / 9));
+    --u: calc(var(--w) / 100);
+    position: relative; width: var(--w); height: calc(var(--w) * 9 / 16);
+    overflow: hidden; background: #000;
+  }
+  #player, .stage iframe {
+    position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+  }
+  /* YouTube 側の操作を拾わないように覆う */
+  .shield { position: absolute; inset: 0; z-index: 1; }
+
+  /* 下側の帯：文字を読みやすくするための暗いグラデーション */
+  .shade {
+    position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--u) * 16);
+    z-index: 2; pointer-events: none;
+    background: linear-gradient(to top, rgba(0,0,0,.72), rgba(0,0,0,0));
+  }
+
+  .info {
+    position: absolute; left: calc(var(--u) * 2.2); bottom: calc(var(--u) * 1.8); z-index: 3;
+    text-shadow: 0 0 calc(var(--u) * .4) rgba(0,0,0,.8);
+  }
+  .live {
+    display: inline-flex; align-items: center; gap: calc(var(--u) * .5);
+    padding: calc(var(--u) * .3) calc(var(--u) * .9); border-radius: 99px;
+    background: #e53935; font-weight: 700; font-size: calc(var(--u) * 1.1); letter-spacing: .12em;
+    text-shadow: none;
+  }
+  .live i {
+    width: calc(var(--u) * .65); height: calc(var(--u) * .65); border-radius: 50%; background: #fff;
+    animation: blink 1.6s ease-in-out infinite;
+  }
+  @keyframes blink { 50% { opacity: .3; } }
+  .place { font-size: calc(var(--u) * 1.25); letter-spacing: .15em; margin-top: calc(var(--u) * .8); opacity: .9; }
+  .title { font-size: calc(var(--u) * 2.6); font-weight: 700; line-height: 1.2; margin-top: calc(var(--u) * .2); }
+
+  .clock {
+    position: absolute; top: calc(var(--u) * 1.6); right: calc(var(--u) * 2); z-index: 3;
+    text-align: right; font-variant-numeric: tabular-nums;
+    padding: calc(var(--u) * .7) calc(var(--u) * 1.2); border-radius: calc(var(--u) * .7);
+    background: rgba(0,0,0,.5);
+  }
+  .clock .t { font-size: calc(var(--u) * 3.4); font-weight: 700; line-height: 1; }
+  .clock .d { font-size: calc(var(--u) * 1.05); margin-top: calc(var(--u) * .4); opacity: .85; }
+
+  .qr-card {
+    position: absolute; right: calc(var(--u) * 2); bottom: calc(var(--u) * 1.8); z-index: 3;
+    display: flex; align-items: center; gap: calc(var(--u) * 1.1);
+    padding: calc(var(--u) * .9); border-radius: calc(var(--u) * .9);
+    background: rgba(255,255,255,.94); color: #111;
+  }
+  .qr-text { text-align: right; }
+  .qr-lead { font-size: calc(var(--u) * 1.45); font-weight: 700; line-height: 1.3; }
+  .qr-note { font-size: calc(var(--u) * 1.05); line-height: 1.5; margin-top: calc(var(--u) * .4); color: #444; }
+  .qr-url { font-size: calc(var(--u) * .95); margin-top: calc(var(--u) * .3); color: #666; }
+  .qr { width: calc(var(--u) * 11); height: calc(var(--u) * 11); }
+  .qr svg { display: block; width: 100%; height: 100%; }
+
+  .notice {
+    position: absolute; inset: 0; z-index: 4; display: none;
+    align-items: center; justify-content: center; text-align: center;
+    background: rgba(0,0,0,.8); font-size: calc(var(--u) * 2); line-height: 1.6;
+  }
+  .notice.show { display: flex; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div id="player"></div>
+  <div class="shield"></div>
+  <div class="shade"></div>
+
+  <div class="info">
+    <div class="live"><i></i>LIVE</div>
+    <div class="place">東京・蒲田</div>
+    <div class="title">SBPSの窓　24時間ライブカメラ</div>
+  </div>
+
+  <div class="clock">
+    <div class="t" id="time">--:--</div>
+    <div class="d" id="date"></div>
+  </div>
+
+  <div class="qr-card">
+    <div class="qr-text">
+      <div class="qr-lead">スマホでも<br>見られます</div>
+      <div class="qr-note">カメラで読み取ると<br>YouTubeで開きます</div>
+      <div class="qr-url" id="qr-url"></div>
+    </div>
+    <div class="qr" id="qr"></div>
+  </div>
+
+  <div class="notice" id="notice">配信に再接続しています…<br>しばらくお待ちください</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script>
+  var CONFIG = {
+    videoId: 'x4gyqPBWZW8',          // 現在の配信 ID
+    reloadHour: 4, reloadMinute: 20  // 毎日この時刻にページを読み直す（配信機の4時再起動の後）
+  };
+
+  // ?v=ID で上書き可能
+  var q = new URLSearchParams(location.search).get('v');
+  var VIDEO_ID = (q && /^[\w-]{11}$/.test(q)) ? q : CONFIG.videoId;
+  var WATCH_URL = 'https://youtu.be/' + VIDEO_ID;
+
+  /* ---- 時計 ---- */
+  var WD = ['日', '月', '火', '水', '木', '金', '土'];
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function tick() {
+    var d = new Date();
+    document.getElementById('time').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes());
+    document.getElementById('date').textContent =
+      (d.getMonth() + 1) + '月' + d.getDate() + '日（' + WD[d.getDay()] + '）';
+    if (d.getHours() === CONFIG.reloadHour && d.getMinutes() === CONFIG.reloadMinute && d.getSeconds() < 15) {
+      location.reload();
+    }
+  }
+  tick();
+  setInterval(tick, 10000);
+
+  /* ---- QR コード ---- */
+  document.getElementById('qr-url').textContent = WATCH_URL.replace('https://', '');
+  try {
+    var qr = qrcode(0, 'M');
+    qr.addData(WATCH_URL);
+    qr.make();
+    document.getElementById('qr').innerHTML = qr.createSvgTag({ cellSize: 8, margin: 0, scalable: true });
+  } catch (e) {
+    // ライブラリが読めない場合は URL 表記だけ残す
+    document.getElementById('qr').style.display = 'none';
+  }
+
+  /* ---- プレーヤー ---- */
+  var player, lastPlaying = Date.now();
+  var notice = document.getElementById('notice');
+
+  function onYouTubeIframeAPIReady() {
+    player = new YT.Player('player', {
+      videoId: VIDEO_ID,
+      playerVars: {
+        autoplay: 1, mute: 1, controls: 0, playsinline: 1,
+        rel: 0, fs: 0, disablekb: 1, iv_load_policy: 3, modestbranding: 1
+      },
+      events: {
+        onReady: function (e) { e.target.mute(); e.target.playVideo(); },
+        onStateChange: function (e) {
+          if (e.data === YT.PlayerState.PLAYING) { lastPlaying = Date.now(); notice.classList.remove('show'); }
+          if (e.data === YT.PlayerState.ENDED) { recover(); }
+        },
+        onError: function () { recover(); }
+      }
+    });
+  }
+
+  function recover() {
+    notice.classList.add('show');
+    setTimeout(function () {
+      if (player && player.loadVideoById) {
+        player.loadVideoById(VIDEO_ID);
+        player.mute();
+      } else {
+        location.reload();
+      }
+    }, 30000);
+  }
+
+  // 見張り：一時停止やバッファで止まったまま 2分続いたら立て直す
+  setInterval(function () {
+    if (!player || !player.getPlayerState) return;
+    var s = player.getPlayerState();
+    if (s === YT.PlayerState.PLAYING) { lastPlaying = Date.now(); return; }
+    if (s === YT.PlayerState.PAUSED || s === YT.PlayerState.CUED) player.playVideo();
+    if (Date.now() - lastPlaying > 5 * 60 * 1000) location.reload();
+    else if (Date.now() - lastPlaying > 2 * 60 * 1000) recover();
+  }, 20000);
+
+  // file:// で直接開くと YouTube がエラー153で再生を断る（リファラーが送られないため）
+  if (location.protocol === 'file:') {
+    notice.innerHTML = 'このファイルを直接開くと映像を再生できません（YouTube エラー153）<br>' +
+      'https://sbps-miyata.github.io/sbps-LiveCam/ を開いてください';
+    notice.classList.add('show');
+    throw new Error('file:// では再生できない');
+  }
+
+  var tag = document.createElement('script');
+  tag.src = 'https://www.youtube.com/iframe_api';
+  tag.onerror = function () { notice.classList.add('show'); setTimeout(function () { location.reload(); }, 60000); };
+  document.head.appendChild(tag);
+</script>
+</body>
+</html>

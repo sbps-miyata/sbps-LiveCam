@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>蒲田ライブカメラ</title>
+<!--
+  蒲田 24時間ライブ配信 デジタルサイネージ用ページ（1枚完結）
+
+  ■ 配信が変わったとき
+    下の CONFIG.videoId を書き換える。
+    またはファイルを開く URL の末尾に ?v=新しいID を付けてもよい（例: kamata-live-signage.html?v=xxxxxxxxxxx）。
+  ■ 画面の向き
+    横置き：右に案内パネル／縦置き：下に案内パネル（自動で切り替わる）
+  ■ 音声
+    ブラウザの自動再生制限のためミュートで再生する（もともと配信は無音）。
+-->
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --line: #2b323c;
+    --text: #f0f3f6;
+    --sub: #9aa4b1;
+    --accent: #ff4d4d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: "BIZ UDPGothic", "Yu Gothic UI", "Hiragino Sans", "Meiryo", sans-serif;
+    cursor: none;
+  }
+  .wrap { display: flex; width: 100vw; height: 100vh; }
+
+  /* 映像エリア：16:9 を保ったまま最大化 */
+  .stage {
+    flex: 1 1 auto; min-width: 0; min-height: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: #000; position: relative;
+  }
+  .video {
+    position: relative; aspect-ratio: 16 / 9;
+    width: 100%; max-height: 100%;
+  }
+  @supports not (aspect-ratio: 16 / 9) {
+    .video { height: 0; padding-top: 56.25%; }
+  }
+  .video > div, .video iframe {
+    position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+  }
+  .live {
+    position: absolute; bottom: 2.2vmin; left: 2.2vmin; z-index: 2;
+    display: flex; align-items: center; gap: .8vmin;
+    padding: .7vmin 1.6vmin; border-radius: 99px;
+    background: rgba(0,0,0,.55); font-weight: 700; font-size: 2.2vmin; letter-spacing: .1em;
+  }
+  .live i {
+    width: 1.4vmin; height: 1.4vmin; border-radius: 50%; background: var(--accent);
+    animation: blink 1.6s ease-in-out infinite;
+  }
+  @keyframes blink { 50% { opacity: .25; } }
+  .notice {
+    position: absolute; inset: 0; z-index: 3; display: none;
+    align-items: center; justify-content: center; text-align: center;
+    background: rgba(0,0,0,.8); font-size: 3vmin; line-height: 1.6;
+  }
+  .notice.show { display: flex; }
+
+  /* 案内パネル */
+  .panel {
+    flex: 0 0 24vw; display: flex; flex-direction: column;
+    padding: 4vmin 3vmin; gap: 3vmin;
+    background: var(--panel); border-left: 1px solid var(--line);
+  }
+  .place { font-size: 2.2vmin; color: var(--sub); letter-spacing: .15em; }
+  .title { font-size: 3.8vmin; white-space: nowrap; font-weight: 700; line-height: 1.25; margin-top: .6vmin; }
+  .clock { font-variant-numeric: tabular-nums; }
+  .clock .t { font-size: 7.5vmin; font-weight: 700; line-height: 1; }
+  .clock .d { font-size: 2.4vmin; color: var(--sub); margin-top: 1vmin; }
+  .qr-box { margin-top: auto; text-align: center; }
+  .qr-lead { font-size: 2.6vmin; font-weight: 700; margin-bottom: 1.6vmin; }
+  .qr {
+    display: inline-block; background: #fff; padding: 1.6vmin; border-radius: 1.4vmin;
+    width: min(19vw, 30vmin);
+  }
+  .qr svg, .qr img { display: block; width: 100%; height: auto; }
+  .qr-note { font-size: 1.9vmin; color: var(--sub); margin-top: 1.4vmin; line-height: 1.5; }
+  .qr-url { font-size: 1.7vmin; color: var(--sub); margin-top: .6vmin; word-break: break-all; }
+  .credit { font-size: 1.6vmin; color: var(--sub); text-align: center; }
+
+  /* 縦置きサイネージ：パネルを下へ */
+  @media (orientation: portrait) {
+    .wrap { flex-direction: column; }
+    .stage { flex: 0 0 auto; }
+    .panel {
+      flex: 1 1 auto; border-left: 0; border-top: 1px solid var(--line);
+      display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto 1fr auto;
+      column-gap: 4vmin; padding: 4vmin;
+    }
+    .head { grid-column: 1; grid-row: 1; }
+    .clock { grid-column: 1; grid-row: 2; }
+    .qr-box { grid-column: 2; grid-row: 1 / span 3; margin-top: 0; align-self: center; }
+    .qr { width: 34vmin; }
+    .credit { grid-column: 1 / span 2; grid-row: 4; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage">
+    <div class="video">
+      <div id="player"></div>
+      <div class="live"><i></i>LIVE</div>
+      <div class="notice" id="notice">配信に再接続しています…<br>しばらくお待ちください</div>
+    </div>
+  </div>
+
+  <aside class="panel">
+    <div class="head">
+      <div class="place">東京・蒲田</div>
+      <div class="title">SBPSの窓<br>24時間ライブカメラ</div>
+    </div>
+    <div class="clock">
+      <div class="t" id="time">--:--</div>
+      <div class="d" id="date"></div>
+    </div>
+    <div class="qr-box">
+      <div class="qr-lead">スマホでも見られます</div>
+      <div class="qr" id="qr"></div>
+      <div class="qr-note">カメラでQRコードを読み取ると<br>YouTubeで同じ映像が開きます</div>
+      <div class="qr-url" id="qr-url"></div>
+    </div>
+    <div class="credit">配信：株式会社SBPS</div>
+  </aside>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script>
+  var CONFIG = {
+    videoId: 'x4gyqPBWZW8',          // 現在の配信 ID
+    reloadHour: 4, reloadMinute: 20  // 毎日この時刻にページを読み直す（配信機の4時再起動の後）
+  };
+
+  // ?v=ID で上書き可能
+  var q = new URLSearchParams(location.search).get('v');
+  var VIDEO_ID = (q && /^[\w-]{11}$/.test(q)) ? q : CONFIG.videoId;
+  var WATCH_URL = 'https://youtu.be/' + VIDEO_ID;
+
+  /* ---- 時計 ---- */
+  var WD = ['日', '月', '火', '水', '木', '金', '土'];
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function tick() {
+    var d = new Date();
+    document.getElementById('time').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes());
+    document.getElementById('date').textContent =
+      d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日（' + WD[d.getDay()] + '）';
+    if (d.getHours() === CONFIG.reloadHour && d.getMinutes() === CONFIG.reloadMinute && d.getSeconds() < 15) {
+      location.reload();
+    }
+  }
+  tick();
+  setInterval(tick, 10000);
+
+  /* ---- QR コード ---- */
+  document.getElementById('qr-url').textContent = WATCH_URL.replace('https://', '');
+  try {
+    var qr = qrcode(0, 'M');
+    qr.addData(WATCH_URL);
+    qr.make();
+    document.getElementById('qr').innerHTML = qr.createSvgTag({ cellSize: 8, margin: 0, scalable: true });
+  } catch (e) {
+    // ライブラリが読めない場合は URL 表記だけ残す
+    document.getElementById('qr').style.display = 'none';
+  }
+
+  /* ---- プレーヤー ---- */
+  var player, lastPlaying = Date.now();
+  var notice = document.getElementById('notice');
+
+  function onYouTubeIframeAPIReady() {
+    player = new YT.Player('player', {
+      videoId: VIDEO_ID,
+      playerVars: {
+        autoplay: 1, mute: 1, controls: 0, playsinline: 1,
+        rel: 0, fs: 0, disablekb: 1, iv_load_policy: 3, modestbranding: 1
+      },
+      events: {
+        onReady: function (e) { e.target.mute(); e.target.playVideo(); },
+        onStateChange: function (e) {
+          if (e.data === YT.PlayerState.PLAYING) { lastPlaying = Date.now(); notice.classList.remove('show'); }
+          if (e.data === YT.PlayerState.ENDED) { recover(); }
+        },
+        onError: function () { recover(); }
+      }
+    });
+  }
+
+  function recover() {
+    notice.classList.add('show');
+    setTimeout(function () {
+      if (player && player.loadVideoById) {
+        player.loadVideoById(VIDEO_ID);
+        player.mute();
+      } else {
+        location.reload();
+      }
+    }, 30000);
+  }
+
+  // 見張り：一時停止やバッファで止まったまま 2分続いたら立て直す
+  setInterval(function () {
+    if (!player || !player.getPlayerState) return;
+    var s = player.getPlayerState();
+    if (s === YT.PlayerState.PLAYING) { lastPlaying = Date.now(); return; }
+    if (s === YT.PlayerState.PAUSED || s === YT.PlayerState.CUED) player.playVideo();
+    if (Date.now() - lastPlaying > 5 * 60 * 1000) location.reload();
+    else if (Date.now() - lastPlaying > 2 * 60 * 1000) recover();
+  }, 20000);
+
+  var tag = document.createElement('script');
+  tag.src = 'https://www.youtube.com/iframe_api';
+  tag.onerror = function () { notice.classList.add('show'); setTimeout(function () { location.reload(); }, 60000); };
+  document.head.appendChild(tag);
+</script>
+</body>
+</html>
