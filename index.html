@@ -173,37 +173,52 @@
         rel: 0, fs: 0, disablekb: 1, iv_load_policy: 3, modestbranding: 1
       },
       events: {
-        onReady: function (e) { e.target.mute(); e.target.playVideo(); },
+        onReady: function () { [0, 1500, 4000, 8000].forEach(function (ms) { setTimeout(kick, ms); }); },
         onStateChange: function (e) {
           if (e.data === YT.PlayerState.PLAYING) { lastPlaying = Date.now(); notice.classList.remove('show'); }
           if (e.data === YT.PlayerState.ENDED) { recover(); }
+          // YouTube のライブは最初の再生命令で一時停止に落ちることがあるので、すぐ命令し直す
+          if (e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.UNSTARTED) { setTimeout(kick, 1000); }
         },
         onError: function () { recover(); }
       }
     });
   }
 
+  // 再生中でなければミュートして再生を命令する（自動再生が拒まれても繰り返す）
+  function kick() {
+    if (!player || !player.getPlayerState) return;
+    var s = player.getPlayerState();
+    if (s === YT.PlayerState.PLAYING || s === YT.PlayerState.BUFFERING) return;
+    player.mute();
+    player.playVideo();
+  }
+
+  var recovering = false;
   function recover() {
+    if (recovering) return;
+    recovering = true;
     notice.classList.add('show');
     setTimeout(function () {
+      recovering = false;
       if (player && player.loadVideoById) {
         player.loadVideoById(VIDEO_ID);
         player.mute();
+        lastPlaying = Date.now();
       } else {
         location.reload();
       }
     }, 30000);
   }
 
-  // 見張り：一時停止やバッファで止まったまま 2分続いたら立て直す
+  // 見張り：5秒ごとに再生を促し、止まったまま 2分続いたら立て直す、5分ならページごと読み直す
   setInterval(function () {
     if (!player || !player.getPlayerState) return;
-    var s = player.getPlayerState();
-    if (s === YT.PlayerState.PLAYING) { lastPlaying = Date.now(); return; }
-    if (s === YT.PlayerState.PAUSED || s === YT.PlayerState.CUED) player.playVideo();
+    if (player.getPlayerState() === YT.PlayerState.PLAYING) { lastPlaying = Date.now(); return; }
+    kick();
     if (Date.now() - lastPlaying > 5 * 60 * 1000) location.reload();
     else if (Date.now() - lastPlaying > 2 * 60 * 1000) recover();
-  }, 20000);
+  }, 5000);
 
   // file:// で直接開くと YouTube がエラー153で再生を断る（リファラーが送られないため）
   if (location.protocol === 'file:') {
