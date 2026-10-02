@@ -46,7 +46,7 @@
   @supports not (aspect-ratio: 16 / 9) {
     .video { height: 0; padding-top: 56.25%; }
   }
-  .video > div, .video iframe {
+  #player, .video iframe {
     position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
   }
   .live {
@@ -104,6 +104,8 @@
     .qr { width: 34vmin; }
     .credit { grid-column: 1 / span 2; grid-row: 4; }
   }
+  #still { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; background: #000; }
+  .still-mode #player { display: none; }
 </style>
 </head>
 <body>
@@ -111,7 +113,8 @@
   <div class="stage">
     <div class="video">
       <div id="player"></div>
-      <div class="live"><i></i>LIVE</div>
+      <img id="still" alt="">
+      <div class="live" id="live"><i></i>LIVE</div>
       <div class="notice" id="notice">配信に再接続しています…<br>しばらくお待ちください</div>
     </div>
   </div>
@@ -174,6 +177,36 @@
     document.getElementById('qr').style.display = 'none';
   }
 
+  /* ---- 静止画モード ---- */
+  // SmartSignage（QtWebEngine）など H.264/AAC を再生できないブラウザでは YouTube のライブが始まらない
+  // （ライブの音声は AAC しか配信されない）。その場合は YouTube が数分おきに更新するライブの静止画を表示する。
+  // URL に ?mode=still / ?mode=live を付けると強制できる。
+  var MODE = new URLSearchParams(location.search).get('mode');
+  var pageStart = Date.now(), everPlayed = false, stillMode = false;
+  function canPlayLive() {
+    var M = window.MediaSource || window.WebKitMediaSource;
+    if (!M || !M.isTypeSupported) return false;
+    return M.isTypeSupported('audio/mp4; codecs="mp4a.40.2"') &&
+      (M.isTypeSupported('video/webm; codecs="vp9"') || M.isTypeSupported('video/mp4; codecs="avc1.4d401f"'));
+  }
+  function startStill() {
+    if (stillMode) return;
+    stillMode = true;
+    document.body.classList.add('still-mode');
+    document.getElementById('notice').classList.remove('show');
+    try { if (player && player.destroy) player.destroy(); } catch (e) {}
+    var img = document.getElementById('still');
+    img.style.display = 'block';
+    document.getElementById('live').lastChild.textContent = '数分ごとに更新';
+    function refresh() {
+      var n = new Image();
+      n.onload = function () { img.src = n.src; };
+      n.src = 'https://i.ytimg.com/vi/' + VIDEO_ID + '/maxresdefault_live.jpg?t=' + Date.now();
+    }
+    refresh();
+    setInterval(refresh, 60000);
+  }
+
   /* ---- プレーヤー ---- */
   var player, lastPlaying = Date.now();
   var notice = document.getElementById('notice');
@@ -188,7 +221,7 @@
       events: {
         onReady: function () { [0, 1500, 4000, 8000].forEach(function (ms) { setTimeout(kick, ms); }); },
         onStateChange: function (e) {
-          if (e.data === YT.PlayerState.PLAYING) { lastPlaying = Date.now(); notice.classList.remove('show'); }
+          if (e.data === YT.PlayerState.PLAYING) { everPlayed = true; lastPlaying = Date.now(); notice.classList.remove('show'); }
           if (e.data === YT.PlayerState.ENDED) { recover(); }
           // YouTube のライブは最初の再生命令で一時停止に落ちることがあるので、すぐ命令し直す
           if (e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.UNSTARTED) { setTimeout(kick, 1000); }
@@ -226,6 +259,9 @@
 
   // 見張り：5秒ごとに再生を促し、止まったまま 2分続いたら立て直す、5分ならページごと読み直す
   setInterval(function () {
+    if (stillMode) return;
+    // 90秒たっても一度も再生できなければ、このブラウザでは再生できないとみなして静止画にする
+    if (!everPlayed && Date.now() - pageStart > 90 * 1000) { startStill(); return; }
     if (!player || !player.getPlayerState) return;
     if (player.getPlayerState() === YT.PlayerState.PLAYING) { lastPlaying = Date.now(); return; }
     kick();
@@ -233,10 +269,14 @@
     else if (Date.now() - lastPlaying > 2 * 60 * 1000) recover();
   }, 5000);
 
-  var tag = document.createElement('script');
-  tag.src = 'https://www.youtube.com/iframe_api';
-  tag.onerror = function () { notice.classList.add('show'); setTimeout(function () { location.reload(); }, 60000); };
-  document.head.appendChild(tag);
+  if (MODE === 'still' || (MODE !== 'live' && !canPlayLive())) {
+    startStill();
+  } else {
+    var tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    tag.onerror = function () { notice.classList.add('show'); setTimeout(function () { location.reload(); }, 60000); };
+    document.head.appendChild(tag);
+  }
 </script>
 </body>
 </html>
